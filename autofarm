@@ -13,6 +13,7 @@ local Config = {
     ScriptURL      = "https://raw.githubusercontent.com/frxcture/8ball/refs/heads/main/autofarm",
     AutoVenue      = true,
     VenueFallback  = "UnitedStates",
+    StartupDelay   = 8,
 }
 
 local function isPoolGodLoaded()
@@ -949,6 +950,7 @@ local lastTurnKey = nil
 
 local queueState     = "IDLE"
 local stateChangedAt = os.clock()
+local startupAt      = os.clock()
 
 setSpin(Config.SpinPreset)
 
@@ -979,12 +981,15 @@ onConn(RunService.Heartbeat:Connect(function()
     if Config.AutoQueue then
         local currentlyInGame = isInGame()
         local elapsed = os.clock() - stateChangedAt
+        local started = (os.clock() - startupAt) >= Config.StartupDelay
 
         if currentlyInGame then
             if queueState ~= "IN_GAME" then
                 queueState     = "IN_GAME"
                 stateChangedAt = os.clock()
             end
+
+        elseif not started then
 
         else
             if queueState == "IN_GAME" then
