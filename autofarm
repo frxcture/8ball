@@ -8,14 +8,14 @@ local Config = {
     QueueRegion    = "UnitedStates",
     PickCardDelay  = 5,
     QueueDelay     = 7,
-    ReQueueAfter   = 20,
+    ReQueueAfter   = 55,
     AutoExecute    = true,
     ScriptURL      = "https://raw.githubusercontent.com/frxcture/8ball/refs/heads/main/autofarm",
     AutoVenue      = true,
     VenueFallback  = "UnitedStates",
-    StartupDelay   = 8,
+    StartupDelay   = 25,
     EndGrace       = 3,
-    MinQueueGap    = 20,
+    MinQueueGap    = 40,
     LibTimeout     = 30,
 }
 
@@ -57,7 +57,8 @@ local libDeadline = os.clock() + Config.LibTimeout
 while os.clock() < libDeadline do
     local libs = RepStorage:FindFirstChild("Libraries")
     local root = libs and libs:FindFirstChild("GameSpecific") and libs.GameSpecific:FindFirstChild("Pool")
-    if root then LibRoot = root break end
+    if root then LibRoot = root 
+    break end
     task.wait(1)
 end
 
