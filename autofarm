@@ -1,4 +1,3 @@
---d
 local Config = {
     AutoPlay       = true,
     AutoDelay      = 0.1,
@@ -8,15 +7,13 @@ local Config = {
     AutoQueue      = true,
     QueueRegion    = "UnitedStates",
     PickCardDelay  = 5,
-    QueueDelay     = 7,
-    ReQueueAfter   = 55,
+    QueueDelay     = 2,
     AutoExecute    = true,
     ScriptURL      = "https://raw.githubusercontent.com/frxcture/8ball/refs/heads/main/autofarm",
     AutoVenue      = true,
     VenueFallback  = "UnitedStates",
     StartupDelay   = 25,
     EndGrace       = 3,
-    MinQueueGap    = 40,
     LibTimeout     = 30,
 }
 
@@ -957,12 +954,6 @@ local queueState     = "IDLE"
 local stateChangedAt = os.clock()
 local startupAt      = os.clock()
 local lastInGameAt   = os.clock()
-local lastQueuedAt   = 0
-
-local function canQueue()
-    if lastQueuedAt == 0 then return true end
-    return (os.clock() - lastQueuedAt) >= Config.MinQueueGap
-end
 
 setSpin(Config.SpinPreset)
 
@@ -1021,20 +1012,8 @@ onConn(RunService.Heartbeat:Connect(function()
                 stateChangedAt = os.clock()
 
             elseif queueState == "IDLE" then
-                if canQueue() then
-                    task.spawn(sendQueue)
-                    lastQueuedAt   = os.clock()
-                    queueState     = "QUEUED"
-                    stateChangedAt = os.clock()
-                elseif elapsed >= 2 then
-                    stateChangedAt = os.clock()
-                end
-
-            elseif queueState == "QUEUED" and elapsed >= Config.ReQueueAfter then
-                if canQueue() then
-                    task.spawn(sendQueue)
-                    lastQueuedAt = os.clock()
-                end
+                task.spawn(sendQueue)
+                queueState     = "QUEUED"
                 stateChangedAt = os.clock()
             end
         end
