@@ -1,6 +1,6 @@
 local Config = {
     AutoPlay       = true,
-    AutoDelay      = 0.1,
+    AutoDelay      = 0.7,
     AutoPlaceBIH   = true,
     GroupOverride  = "Auto",
     SpinPreset     = "Center",
@@ -8,7 +8,7 @@ local Config = {
     QueueRegion    = "UnitedStates",
     PickCardDelay  = 4,
     QueueDelay     = 6,
-    ReQueueAfter   = 10,
+    ReQueueAfter   = 6,
     AutoExecute    = true,
     ScriptURL      = "https://raw.githubusercontent.com/frxcture/8ball/refs/heads/main/autofarm",
     AutoVenue      = true,
