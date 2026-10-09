@@ -1,3 +1,4 @@
+--s
 local Config = {
     AutoPlay       = true,
     AutoDelay      = 0.1,
@@ -6,7 +7,6 @@ local Config = {
     SpinPreset     = "Center",
     AutoQueue      = true,
     QueueRegion    = "UnitedStates",
-    PickCardDelay  = 5,
     QueueDelay     = 2,
     AutoExecute    = true,
     ScriptURL      = "https://raw.githubusercontent.com/frxcture/8ball/refs/heads/main/autofarm",
@@ -15,7 +15,9 @@ local Config = {
     StartupDelay   = 4,
     EndGrace       = 3,
     RematchDelay   = 2,
-    NoActionTimeout = 10,
+    RematchWindow  = 8,
+    ReturnMode     = "",
+    NoActionTimeout = 15,
     LibTimeout     = 30,
 }
 
@@ -937,6 +939,13 @@ local function sendRematch()
     return fireRemote(remote, "Rematch")
 end
 
+local function sendReturn()
+    if Config.ReturnMode == "" then return false end
+    local remote = getPoolRemote()
+    if not remote then return false end
+    return fireRemote(remote, Config.ReturnMode)
+end
+
 local function sendPickCard()
     local remote = getPoolRemote()
     if not remote then return false end
@@ -965,6 +974,7 @@ local lastInGameAt   = os.clock()
 local lastActionAt   = os.clock()
 local nextRematchAt  = 0
 local nextQueueAt    = 0
+local firedPickCard  = false
 
 setSpin(Config.SpinPreset)
 
@@ -1006,6 +1016,7 @@ onConn(RunService.Heartbeat:Connect(function()
             lastActionAt   = os.clock()
             nextRematchAt  = 0
             nextQueueAt    = 0
+            firedPickCard  = false
             if queueState ~= "IN_GAME" then
                 queueState     = "IN_GAME"
                 stateChangedAt = os.clock()
@@ -1020,14 +1031,27 @@ onConn(RunService.Heartbeat:Connect(function()
                 queueState     = "POST_MATCH"
                 stateChangedAt = os.clock()
 
-            elseif queueState == "POST_MATCH" and elapsed >= Config.PickCardDelay then
-                task.spawn(pickCardWithRetry)
-                queueState     = "PICKING_CARD"
-                stateChangedAt = os.clock()
+            elseif queueState == "POST_MATCH" then
+                local now = os.clock()
+                if now >= nextRematchAt then
+                    task.spawn(sendRematch)
+                    nextRematchAt = now + Config.RematchDelay
+                end
+                if elapsed >= Config.RematchWindow then
+                    task.spawn(sendReturn)
+                    queueState     = "PICKING_CARD"
+                    stateChangedAt = os.clock()
+                end
 
-            elseif queueState == "PICKING_CARD" and elapsed >= Config.QueueDelay then
-                queueState     = "LOBBY"
-                stateChangedAt = os.clock()
+            elseif queueState == "PICKING_CARD" then
+                if not firedPickCard then
+                    firedPickCard  = true
+                    task.spawn(pickCardWithRetry)
+                elseif elapsed >= Config.QueueDelay then
+                    firedPickCard  = false
+                    queueState     = "LOBBY"
+                    stateChangedAt = os.clock()
+                end
 
             elseif queueState == "LOBBY" then
                 local now     = os.clock()
@@ -1192,6 +1216,36 @@ _G.__POOLGOD_AUTO = {
             BestVenue  = selectBestVenue(),
             Venues     = scanVenues(),
         }
+    end,
+    Dump = function()
+        local out = { Remotes = {}, UI = {} }
+        local remotes = RepStorage:FindFirstChild("Remotes")
+        if remotes then
+            local list = remotes:FindFirstChild("Pool") or remotes
+            for _, r in ipairs(list:GetDescendants()) do
+                if isRemote(r) then
+                    out.Remotes[#out.Remotes + 1] = r:GetFullName()
+                end
+            end
+        end
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        local menu = pg and pg:FindFirstChild("PoolMenuUI")
+        if menu then
+            for _, scr in ipairs(menu:GetChildren()) do
+                local entry = { Screen = scr.Name, Buttons = {} }
+                for _, c in ipairs(scr:GetDescendants()) do
+                    if c:IsA("TextButton") or c:IsA("ImageButton") then
+                        local label = c.Name
+                        if c:IsA("TextButton") and c.Text and c.Text ~= "" then
+                            label = label .. " [" .. c.Text .. "]"
+                        end
+                        entry.Buttons[#entry.Buttons + 1] = label
+                    end
+                end
+                out.UI[#out.UI + 1] = entry
+            end
+        end
+        return out
     end,
 }
 
