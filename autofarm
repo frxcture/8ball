@@ -15,7 +15,7 @@ local Config = {
     StartupDelay   = 4,
     EndGrace       = 3,
     RematchDelay   = 2,
-    NoActionTimeout = 15,
+    NoActionTimeout = 10,
     LibTimeout     = 30,
 }
 
