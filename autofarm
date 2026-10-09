@@ -16,6 +16,7 @@ local Config = {
     StartupDelay   = 8,
     EndGrace       = 3,
     MinQueueGap    = 20,
+    LibTimeout     = 30,
 }
 
 local function isPoolGodLoaded()
@@ -51,15 +52,16 @@ LocalPlayer.Idled:Connect(function()
     VirtualUser:ClickButton2(Vector2.new())
 end)
 
-local LibRoot = RepStorage:WaitForChild("Libraries", 15)
-    and RepStorage:FindFirstChild("Libraries")
-    and RepStorage.Libraries:FindFirstChild("GameSpecific")
-    and RepStorage.Libraries.GameSpecific:FindFirstChild("Pool")
-
-if not LibRoot then
-    LocalPlayer:Kick("Pool God Auto: Pool engine not found.")
-    return
+local LibRoot = nil
+local libDeadline = os.clock() + Config.LibTimeout
+while os.clock() < libDeadline do
+    local libs = RepStorage:FindFirstChild("Libraries")
+    local root = libs and libs:FindFirstChild("GameSpecific") and libs.GameSpecific:FindFirstChild("Pool")
+    if root then LibRoot = root break end
+    task.wait(1)
 end
+
+if not LibRoot then return end
 
 local modulesOK = true
 local function req(name)
@@ -81,7 +83,6 @@ local PoolInputController = req("PoolInputController")
 local PoolHudRenderer     = req("PoolHudRenderer")
 
 if not modulesOK or not (PoolConstants and PoolPhysics and PoolInputController) then
-    LocalPlayer:Kick("Pool God Auto: engine modules failed.")
     return
 end
 
