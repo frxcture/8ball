@@ -1,6 +1,6 @@
 local Config = {
     AutoPlay       = true,
-    AutoDelay      = 0.7,
+    AutoDelay      = 0.1,
     AutoPlaceBIH   = true,
     GroupOverride  = "Auto",
     SpinPreset     = "Center",
