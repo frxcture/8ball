@@ -11,6 +11,8 @@ local Config = {
     ReQueueAfter   = 10,
     AutoExecute    = true,
     ScriptURL      = "https://raw.githubusercontent.com/frxcture/8ball/refs/heads/main/autofarm",
+    AutoVenue      = true,
+    VenueFallback  = "UnitedStates",
 }
 
 if _G.__POOLGOD_AUTO and type(_G.__POOLGOD_AUTO.Unload) == "function" then
@@ -819,10 +821,97 @@ local function fireRemote(remote, ...)
     return pcall(function() return remote:FireServer(table.unpack(args, 1, args.n)) end)
 end
 
+local venueTrackCache = nil
+local function getVenueTrack()
+    if venueTrackCache and venueTrackCache.Parent then return venueTrackCache end
+    venueTrackCache = nil
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    local menu = pg and pg:FindFirstChild("PoolMenuUI")
+    local venueMenu = menu and menu:FindFirstChild("VenueMenu")
+    local track = venueMenu and venueMenu:FindFirstChild("Track")
+    if track then venueTrackCache = track end
+    return track
+end
+
+local function parsePrize(text)
+    if type(text) ~= "string" then return nil end
+    local numStr, suffix = text:match("(%d[%d,%.]*)%s*([KkMmBb]?)")
+    if not numStr then return nil end
+    local n = tonumber((numStr:gsub(",", "")))
+    if not n or n <= 0 then return nil end
+    local mul = 1
+    suffix = (suffix or ""):upper()
+    if suffix == "K" then mul = 1e3
+    elseif suffix == "M" then mul = 1e6
+    elseif suffix == "B" then mul = 1e9 end
+    return n * mul
+end
+
+local function ringUnlocked(ring)
+    if type(ring) ~= "string" then return nil end
+    local upper = ring:upper()
+    if upper == "" then return nil end
+    local hasUnlockedWord = upper:find("UNLOCKED") ~= nil
+    local stripped = upper:gsub("UNLOCKED", "")
+    if stripped:find("LOCKED") then return false end
+    if hasUnlockedWord or upper:find("UNLOCK THE NEXT") then return true end
+    return nil
+end
+
+local function scanVenues()
+    local track = getVenueTrack()
+    if not track then return nil end
+    local list = {}
+    for _, v in ipairs(track:GetChildren()) do
+        if v:IsA("GuiButton") then
+            local prizeLbl = v:FindFirstChild("Prize", true)
+            local ringLbl  = v:FindFirstChild("Ring", true)
+            local prize    = prizeLbl and parsePrize(prizeLbl.Text) or nil
+            if prize then
+                list[#list + 1] = {
+                    Name     = v.Name,
+                    Prize    = prize,
+                    Unlocked = ringLbl and ringUnlocked(ringLbl.Text) or nil,
+                    Ring     = ringLbl and ringLbl.Text or "",
+                }
+            end
+        end
+    end
+    if #list == 0 then return nil end
+    return list
+end
+
+local function selectBestVenue()
+    local list = scanVenues()
+    if not list then return nil end
+    local best, bestPrize, unlockedCount = nil, -math.huge, 0
+    for _, e in ipairs(list) do
+        if e.Unlocked == true then
+            unlockedCount += 1
+            if e.Prize > bestPrize then
+                bestPrize = e.Prize
+                best = e
+            end
+        end
+    end
+    if unlockedCount == 0 or not best then return nil end
+    return best.Name
+end
+
+local function bestRegion()
+    if not Config.AutoVenue then return Config.QueueRegion end
+    local first = selectBestVenue()
+    if not first then return Config.VenueFallback or Config.QueueRegion end
+    task.wait(0.15)
+    local second = selectBestVenue()
+    if second ~= first then return Config.VenueFallback or Config.QueueRegion end
+    return first
+end
+
 local function sendQueue()
     local remote = getPoolRemote()
     if not remote then return false end
-    return fireRemote(remote, "Queue", Config.QueueRegion)
+    return fireRemote(remote, "Queue", bestRegion())
 end
 
 local function sendPickCard()
@@ -1041,6 +1130,8 @@ _G.__POOLGOD_AUTO = {
             Remote     = getPoolRemote(),
             AutoQueue  = Config.AutoQueue,
             AutoExecute = Config.AutoExecute,
+            BestVenue  = selectBestVenue(),
+            Venues     = scanVenues(),
         }
     end,
 }
