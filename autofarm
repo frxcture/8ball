@@ -1027,6 +1027,11 @@ local function clickButton(btn)
     return false
 end
 
+local returnClicked    = false
+local cardClicks       = 0
+local cardFallbackUsed = false
+local nextUiScanAt     = 0
+
 local function handleScreens()
     if os.clock() < nextUiScanAt then return end
     nextUiScanAt = os.clock() + 0.5
@@ -1058,10 +1063,6 @@ local lastInGameAt   = os.clock()
 local lastActionAt   = os.clock()
 local nextRematchAt  = 0
 local nextQueueAt    = 0
-local returnClicked    = false
-local cardClicks       = 0
-local cardFallbackUsed = false
-local nextUiScanAt     = 0
 
 setSpin(Config.SpinPreset)
 
