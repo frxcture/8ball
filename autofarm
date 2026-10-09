@@ -1,14 +1,16 @@
 local Config = {
     AutoPlay       = true,
-    AutoDelay      = 0.01,
+    AutoDelay      = 0.7,
     AutoPlaceBIH   = true,
     GroupOverride  = "Auto",
     SpinPreset     = "Center",
-    AutoQueue      = false,
+    AutoQueue      = true,
     QueueRegion    = "UnitedStates",
-    PickCardDelay  = 3,
-    QueueDelay     = 5,
-    ReQueueAfter   = 9,
+    PickCardDelay  = 4,
+    QueueDelay     = 6,
+    ReQueueAfter   = 10,
+    AutoExecute    = true,
+    ScriptURL      = "https://raw.githubusercontent.com/frxcture/8ball/refs/heads/main/autofarm",
 }
 
 if _G.__POOLGOD_AUTO and type(_G.__POOLGOD_AUTO.Unload) == "function" then
@@ -72,13 +74,14 @@ local hooks = {
     BeginShot   = nil,
     Legal       = nil,
 }
-local captured = { Input = nil, Rules = nil }
+local captured = { Input = nil, Rules = nil, InputAt = 0, RulesAt = 0 }
 
 local function installHooks()
     if PoolInputController.Update and hooks.InputUpdate == nil then
         hooks.InputUpdate = PoolInputController.Update
         PoolInputController.Update = function(y, z, ...)
             captured.Input = y
+            captured.InputAt = os.clock()
             return hooks.InputUpdate(y, z, ...)
         end
     end
@@ -86,6 +89,7 @@ local function installHooks()
         hooks.SetState = PoolInputController.SetState
         PoolInputController.SetState = function(y, z, ...)
             captured.Input = y
+            captured.InputAt = os.clock()
             return hooks.SetState(y, z, ...)
         end
     end
@@ -93,6 +97,7 @@ local function installHooks()
         hooks.BeginShot = PoolRules.BeginShot
         PoolRules.BeginShot = function(y, z, ...)
             captured.Rules = y
+            captured.RulesAt = os.clock()
             return hooks.BeginShot(y, z, ...)
         end
     end
@@ -100,6 +105,7 @@ local function installHooks()
         hooks.Legal = PoolRules.IsLegalFirstContact
         PoolRules.IsLegalFirstContact = function(y, z, A, ...)
             captured.Rules = y
+            captured.RulesAt = os.clock()
             return hooks.Legal(y, z, A, ...)
         end
     end
@@ -237,17 +243,28 @@ local function getTargets(sim)
     return targets, label
 end
 
+local function matchOver(state)
+    if not state then return true end
+    local w = state.Winner
+    if w ~= nil and w ~= false and w ~= 0 then return true end
+    return state.GameOver == true
+        or state.IsOver == true
+        or state.Over == true
+        or state.MatchOver == true
+        or state.Finished == true
+end
+
 local function isInGame()
     local _seat, matchState = mySeat()
     if matchState then
         local phase = matchState.Phase
         if phase == "Playing" or phase == "Break" then
-            return true
+            return not matchOver(matchState)
         end
         return false
     end
     local input = captured.Input
-    if input then
+    if input and (os.clock() - captured.InputAt) < 1.0 then
         local sim = input.Simulation
         if sim and sim.Balls then
             local cue = sim.Balls[PoolConstants.CueBallNumber]
@@ -765,24 +782,61 @@ local function setSpin(preset)
     end
 end
 
+local poolRemoteCache = nil
+local function isRemote(inst)
+    return inst and (inst:IsA("RemoteEvent")
+        or inst:IsA("RemoteFunction")
+        or inst:IsA("UnreliableRemoteEvent"))
+end
+
 local function getPoolRemote()
+    if poolRemoteCache and poolRemoteCache.Parent then return poolRemoteCache end
+    poolRemoteCache = nil
+
     local remotes = RepStorage:FindFirstChild("Remotes")
-    if not remotes then return nil end
-    return remotes:FindFirstChild("Pool")
+    if remotes then
+        local pool = remotes:FindFirstChild("Pool")
+        if isRemote(pool) then poolRemoteCache = pool; return pool end
+    end
+
+    local direct = RepStorage:FindFirstChild("Pool")
+    if isRemote(direct) then poolRemoteCache = direct; return direct end
+
+    for _, inst in ipairs(RepStorage:GetDescendants()) do
+        if isRemote(inst) and inst.Name:find("Pool") then
+            poolRemoteCache = inst
+            return inst
+        end
+    end
+    return nil
+end
+
+local function fireRemote(remote, ...)
+    local args = table.pack(...)
+    if remote:IsA("RemoteFunction") then
+        return pcall(function() return remote:InvokeServer(table.unpack(args, 1, args.n)) end)
+    end
+    return pcall(function() return remote:FireServer(table.unpack(args, 1, args.n)) end)
 end
 
 local function sendQueue()
     local remote = getPoolRemote()
     if not remote then return false end
-    local ok = pcall(function() remote:FireServer("Queue", Config.QueueRegion) end)
-    return ok
+    return fireRemote(remote, "Queue", Config.QueueRegion)
 end
 
 local function sendPickCard()
     local remote = getPoolRemote()
     if not remote then return false end
-    local ok = pcall(function() remote:FireServer("PickCard") end)
-    return ok
+    return fireRemote(remote, "PickCard")
+end
+
+local function pickCardWithRetry()
+    for _ = 1, 3 do
+        if sendPickCard() then return true end
+        task.wait(1)
+    end
+    return false
 end
 
 local connections = {}
@@ -833,11 +887,13 @@ onConn(RunService.Heartbeat:Connect(function()
 
         else
             if queueState == "IN_GAME" then
+                captured.Input = nil
+                captured.Rules = nil
                 queueState     = "POST_MATCH"
                 stateChangedAt = os.clock()
 
             elseif queueState == "POST_MATCH" and elapsed >= Config.PickCardDelay then
-                task.spawn(sendPickCard)
+                task.spawn(pickCardWithRetry)
                 queueState     = "PICKING_CARD"
                 stateChangedAt = os.clock()
 
@@ -935,6 +991,28 @@ onConn(RunService.Heartbeat:Connect(function()
     end
 end))
 
+local function makeLoader()
+    return string.format(
+        "pcall(function() local f = loadstring or load; f(game:HttpGet(%q))() end)",
+        Config.ScriptURL)
+end
+
+local function scheduleReExec()
+    if not Config.AutoExecute then return false end
+    local loader = makeLoader()
+    if type(queue_on_teleport) == "function" then
+        if pcall(queue_on_teleport, loader) then return true end
+    end
+    if type(queueonteleport) == "function" then
+        if pcall(queueonteleport, loader) then return true end
+    end
+    local syn = rawget(_G, "syn")
+    if type(syn) == "table" and type(syn.queue_on_teleport) == "function" then
+        if pcall(syn.queue_on_teleport, loader) then return true end
+    end
+    return false
+end
+
 _G.__POOLGOD_AUTO = {
     Unload = function()
         for _, c in ipairs(connections) do
@@ -948,4 +1026,23 @@ _G.__POOLGOD_AUTO = {
         aimAnim        = nil
         _G.__POOLGOD_AUTO = nil
     end,
+    ReExec = scheduleReExec,
+    Reload = function()
+        local ok, err = pcall(function()
+            local f = loadstring or load
+            f(game:HttpGet(Config.ScriptURL))()
+        end)
+        return ok, err
+    end,
+    Status = function()
+        return {
+            QueueState = queueState,
+            InGame     = isInGame(),
+            Remote     = getPoolRemote(),
+            AutoQueue  = Config.AutoQueue,
+            AutoExecute = Config.AutoExecute,
+        }
+    end,
 }
+
+scheduleReExec()
