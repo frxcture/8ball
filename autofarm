@@ -1,4 +1,3 @@
---s
 local Config = {
     AutoPlay       = true,
     AutoDelay      = 0.1,
@@ -14,10 +13,9 @@ local Config = {
     VenueFallback  = "UnitedStates",
     StartupDelay   = 4,
     EndGrace       = 3,
-    RematchDelay   = 2,
-    RematchWindow  = 8,
+    RematchDelay   = 1,
+    RematchWindow  = 12,
     ReturnMode     = "",
-    NoActionTimeout = 15,
     LibTimeout     = 30,
 }
 
@@ -960,6 +958,92 @@ local function pickCardWithRetry()
     return false
 end
 
+local VIM = game:GetService("VirtualInputManager")
+
+local RETURN_PATTERNS = { "return", "leave", "main menu", "mainmenu", "back to lobby", "exit", "home", "quit" }
+local CARD_PATTERNS  = { "card", "pack", "open", "claim", "collect", "reveal", "reward", "tap", "continue" }
+
+local function uiButtonPriority(btn)
+    local hay = tostring(btn.Name)
+    if btn:IsA("TextButton") and btn.Text then
+        hay = hay .. " " .. tostring(btn.Text)
+    end
+    hay = hay:lower()
+    local rScore, cScore = 0, 0
+    for i, p in ipairs(RETURN_PATTERNS) do
+        if hay:find(p, 1, true) then rScore = math.max(rScore, 1000 - i) end
+    end
+    for i, p in ipairs(CARD_PATTERNS) do
+        if hay:find(p, 1, true) then cScore = math.max(cScore, 500 - i) end
+    end
+    if rScore > 0 and rScore >= cScore then return "RETURN" end
+    if cScore > 0 then return "CARD" end
+    return nil
+end
+
+local function findUiButton()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg then return nil, nil end
+    local best, bestKind, bestPrio = nil, nil, 0
+    for _, gui in ipairs(pg:GetChildren()) do
+        if gui:IsA("ScreenGui") and gui.Enabled then
+            for _, btn in ipairs(gui:GetDescendants()) do
+                if (btn:IsA("TextButton") or btn:IsA("ImageButton"))
+                    and btn.Visible and btn.AbsoluteSize.X > 0 then
+                    local kind = uiButtonPriority(btn)
+                    if kind then
+                        local prio = (kind == "RETURN" and 1 or 2)
+                        if prio <= bestPrio or bestPrio == 0 then
+                            if prio < bestPrio or bestPrio == 0 then
+                                bestPrio = prio
+                                best = btn
+                                bestKind = kind
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return best, bestKind
+end
+
+local function clickButton(btn)
+    if not (btn and btn.Parent) then return false end
+    local fs = _G.firesignal
+    if type(fs) == "function" then
+        local ok = pcall(fs, btn.MouseButton1Click, 1)
+        if ok then return true end
+    end
+    if btn:IsA("GuiButton") then
+        local pos = btn.AbsolutePosition
+        local sz  = btn.AbsoluteSize
+        local ok = pcall(function()
+            VIM:SendMouseButtonEvent(pos.X + sz.X / 2, pos.Y + sz.Y / 2, 0, true, game, 1)
+            VIM:SendMouseButtonEvent(pos.X + sz.X / 2, pos.Y + sz.Y / 2, 0, false, game, 1)
+        end)
+        return ok
+    end
+    return false
+end
+
+local function handleScreens()
+    if os.clock() < nextUiScanAt then return end
+    nextUiScanAt = os.clock() + 0.5
+    local btn, kind = findUiButton()
+    if btn and kind == "RETURN" and not returnClicked then
+        returnClicked = true
+        task.spawn(clickButton, btn)
+    elseif btn and kind == "CARD" and cardClicks < 4 then
+        task.spawn(clickButton, btn)
+        cardClicks      = cardClicks + 1
+        nextUiScanAt    = os.clock() + 1
+    elseif not cardFallbackUsed and cardClicks == 0 then
+        cardFallbackUsed = true
+        task.spawn(pickCardWithRetry)
+    end
+end
+
 local connections = {}
 local function onConn(c) connections[#connections + 1] = c; return c end
 
@@ -974,7 +1058,10 @@ local lastInGameAt   = os.clock()
 local lastActionAt   = os.clock()
 local nextRematchAt  = 0
 local nextQueueAt    = 0
-local firedPickCard  = false
+local returnClicked    = false
+local cardClicks       = 0
+local cardFallbackUsed = false
+local nextUiScanAt     = 0
 
 setSpin(Config.SpinPreset)
 
@@ -1016,7 +1103,9 @@ onConn(RunService.Heartbeat:Connect(function()
             lastActionAt   = os.clock()
             nextRematchAt  = 0
             nextQueueAt    = 0
-            firedPickCard  = false
+            returnClicked    = false
+            cardClicks       = 0
+            cardFallbackUsed = false
             if queueState ~= "IN_GAME" then
                 queueState     = "IN_GAME"
                 stateChangedAt = os.clock()
@@ -1037,32 +1126,22 @@ onConn(RunService.Heartbeat:Connect(function()
                     task.spawn(sendRematch)
                     nextRematchAt = now + Config.RematchDelay
                 end
-                if elapsed >= Config.RematchWindow then
-                    task.spawn(sendReturn)
-                    queueState     = "PICKING_CARD"
-                    stateChangedAt = os.clock()
-                end
-
-            elseif queueState == "PICKING_CARD" then
-                if not firedPickCard then
-                    firedPickCard  = true
-                    task.spawn(pickCardWithRetry)
-                elseif elapsed >= Config.QueueDelay then
-                    firedPickCard  = false
+                handleScreens()
+                if returnClicked or elapsed >= Config.RematchWindow then
                     queueState     = "LOBBY"
                     stateChangedAt = os.clock()
                 end
 
             elseif queueState == "LOBBY" then
-                local now     = os.clock()
-                local idleFor = now - lastActionAt
+                local now = os.clock()
                 if now >= nextRematchAt then
                     task.spawn(sendRematch)
                     nextRematchAt = now + Config.RematchDelay
                 end
-                if idleFor >= Config.NoActionTimeout and now >= nextQueueAt then
+                handleScreens()
+                if getVenueTrack() and now >= nextQueueAt then
                     task.spawn(sendQueue)
-                    nextQueueAt = now + Config.RematchDelay
+                    nextQueueAt = now + Config.QueueDelay
                 end
             end
         end
