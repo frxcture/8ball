@@ -1,3 +1,4 @@
+--d
 local Config = {
     AutoPlay       = true,
     AutoDelay      = 0.1,
