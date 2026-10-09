@@ -15,6 +15,18 @@ local Config = {
     VenueFallback  = "UnitedStates",
 }
 
+local function isPoolGodLoaded()
+    return type(_G.__POOLGOD_AUTO) == "table"
+        and _G.__POOLGOD_AUTO.Loaded == true
+end
+_G.is_poolgod_loaded = isPoolGodLoaded
+
+if _G.__POOLGOD_AUTOEXEC == true and isPoolGodLoaded() then
+    _G.__POOLGOD_AUTOEXEC = nil
+    return
+end
+_G.__POOLGOD_AUTOEXEC = nil
+
 if _G.__POOLGOD_AUTO and type(_G.__POOLGOD_AUTO.Unload) == "function" then
     pcall(_G.__POOLGOD_AUTO.Unload)
     _G.__POOLGOD_AUTO = nil
@@ -1082,27 +1094,43 @@ end))
 
 local function makeLoader()
     return string.format(
-        "pcall(function() local f = loadstring or load; f(game:HttpGet(%q))() end)",
+        "pcall(function() "
+        .. "if _G.is_poolgod_loaded and _G.is_poolgod_loaded() then return end "
+        .. "_G.__POOLGOD_AUTOEXEC = true "
+        .. "local f = loadstring or load; f(game:HttpGet(%q))() "
+        .. "end)",
         Config.ScriptURL)
 end
 
 local function scheduleReExec()
     if not Config.AutoExecute then return false end
+    if type(_G.__POOLGOD_AUTO) == "table" and _G.__POOLGOD_AUTO.ReExecQueued then
+        return true
+    end
     local loader = makeLoader()
+    local queued = false
     if type(queue_on_teleport) == "function" then
-        if pcall(queue_on_teleport, loader) then return true end
+        queued = pcall(queue_on_teleport, loader)
     end
-    if type(queueonteleport) == "function" then
-        if pcall(queueonteleport, loader) then return true end
+    if not queued and type(queueonteleport) == "function" then
+        queued = pcall(queueonteleport, loader)
     end
-    local syn = rawget(_G, "syn")
-    if type(syn) == "table" and type(syn.queue_on_teleport) == "function" then
-        if pcall(syn.queue_on_teleport, loader) then return true end
+    if not queued then
+        local syn = rawget(_G, "syn")
+        if type(syn) == "table" and type(syn.queue_on_teleport) == "function" then
+            queued = pcall(syn.queue_on_teleport, loader)
+        end
     end
-    return false
+    if queued and type(_G.__POOLGOD_AUTO) == "table" then
+        _G.__POOLGOD_AUTO.ReExecQueued = true
+    end
+    return queued
 end
 
 _G.__POOLGOD_AUTO = {
+    Loaded       = true,
+    LoadedAt     = os.clock(),
+    ReExecQueued = false,
     Unload = function()
         for _, c in ipairs(connections) do
             if c and typeof(c) == "RBXScriptConnection" then c:Disconnect() end
@@ -1116,6 +1144,7 @@ _G.__POOLGOD_AUTO = {
         _G.__POOLGOD_AUTO = nil
     end,
     ReExec = scheduleReExec,
+    IsLoaded = isPoolGodLoaded,
     Reload = function()
         local ok, err = pcall(function()
             local f = loadstring or load
