@@ -6,14 +6,16 @@ local Config = {
     SpinPreset     = "Center",
     AutoQueue      = true,
     QueueRegion    = "UnitedStates",
-    PickCardDelay  = 4,
-    QueueDelay     = 6,
-    ReQueueAfter   = 6,
+    PickCardDelay  = 5,
+    QueueDelay     = 7,
+    ReQueueAfter   = 20,
     AutoExecute    = true,
     ScriptURL      = "https://raw.githubusercontent.com/frxcture/8ball/refs/heads/main/autofarm",
     AutoVenue      = true,
     VenueFallback  = "UnitedStates",
     StartupDelay   = 8,
+    EndGrace       = 3,
+    MinQueueGap    = 20,
 }
 
 local function isPoolGodLoaded()
@@ -951,6 +953,13 @@ local lastTurnKey = nil
 local queueState     = "IDLE"
 local stateChangedAt = os.clock()
 local startupAt      = os.clock()
+local lastInGameAt   = os.clock()
+local lastQueuedAt   = 0
+
+local function canQueue()
+    if lastQueuedAt == 0 then return true end
+    return (os.clock() - lastQueuedAt) >= Config.MinQueueGap
+end
 
 setSpin(Config.SpinPreset)
 
@@ -984,6 +993,7 @@ onConn(RunService.Heartbeat:Connect(function()
         local started = (os.clock() - startupAt) >= Config.StartupDelay
 
         if currentlyInGame then
+            lastInGameAt = os.clock()
             if queueState ~= "IN_GAME" then
                 queueState     = "IN_GAME"
                 stateChangedAt = os.clock()
@@ -992,7 +1002,7 @@ onConn(RunService.Heartbeat:Connect(function()
         elseif not started then
 
         else
-            if queueState == "IN_GAME" then
+            if queueState == "IN_GAME" and (os.clock() - lastInGameAt) >= Config.EndGrace then
                 captured.Input = nil
                 captured.Rules = nil
                 queueState     = "POST_MATCH"
@@ -1008,12 +1018,20 @@ onConn(RunService.Heartbeat:Connect(function()
                 stateChangedAt = os.clock()
 
             elseif queueState == "IDLE" then
-                task.spawn(sendQueue)
-                queueState     = "QUEUED"
-                stateChangedAt = os.clock()
+                if canQueue() then
+                    task.spawn(sendQueue)
+                    lastQueuedAt   = os.clock()
+                    queueState     = "QUEUED"
+                    stateChangedAt = os.clock()
+                elseif elapsed >= 2 then
+                    stateChangedAt = os.clock()
+                end
 
             elseif queueState == "QUEUED" and elapsed >= Config.ReQueueAfter then
-                task.spawn(sendQueue)
+                if canQueue() then
+                    task.spawn(sendQueue)
+                    lastQueuedAt = os.clock()
+                end
                 stateChangedAt = os.clock()
             end
         end
